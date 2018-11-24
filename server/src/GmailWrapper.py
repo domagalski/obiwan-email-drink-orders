@@ -48,6 +48,7 @@ class GmailClient:
 
         # Object items.
         self.service = None
+        self.notif_proc = None
         self.notif_send = None
         self.notif_recv = None
         self.user_hist = None
@@ -86,9 +87,9 @@ class GmailClient:
         # Set up the message callback thread
         os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.application
         self.notif_recv, self.notif_send = mp.Pipe(False)
-        notif_proc = mp.Process(target=self._notification_thread)
-        notif_proc.daemon = True
-        notif_proc.start()
+        self.notif_proc = mp.Process(target=self._notification_thread)
+        self.notif_proc.daemon = True
+        self.notif_proc.start()
 
     def not_from_self(self, message_attr):
         # check to make sure someone else sent the message received.
