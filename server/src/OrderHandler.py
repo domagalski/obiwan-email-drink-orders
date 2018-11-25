@@ -68,7 +68,7 @@ class OrderHandler(gw.GmailClient):
         self.active_tickets[ticket_id] = message
 
         # Create a pickle of minimal information to send to the bar
-        order = {'email': self.email_name, 'id': ticket_id}
+        order = {'id': ticket_id}
         if '<' in message['from'] and '>' in message['from']:
             order['from'] = message['from'].split('<')[0].strip()
         else:
