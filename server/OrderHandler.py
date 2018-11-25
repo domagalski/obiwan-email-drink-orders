@@ -110,8 +110,6 @@ class OrderHandler(gw.GmailClient):
         """
         subject = message['subject'].lower()
         if self.magic_word not in subject:
-            if subject.find(self.drink_subj['confirm']) != -1:
-                return
             self.reply_nopasswd(message['from'], message['subject'], threadId)
             return
 
@@ -124,6 +122,9 @@ class OrderHandler(gw.GmailClient):
         print('Sent reply.')
 
     def reply_menu(self, sender, threadId=None):
+        """
+        Reply to a menu request
+        """
         reply_msg = {}
         reply_msg['to'] = sender
         reply_msg['subject'] = self.drink_subj['menu']
@@ -131,6 +132,9 @@ class OrderHandler(gw.GmailClient):
         self.send_message(reply_msg, threadId)
 
     def reply_nopasswd(self, sender, subject, threadId=None):
+        """
+        Reply when the user didn't put the magic word in the subject.
+        """
         reply_msg = {}
         reply_msg['to'] = sender
         reply_msg['subject'] = 'ERROR: Invalid Message Subject: '
@@ -143,14 +147,21 @@ class OrderHandler(gw.GmailClient):
         self.send_message(reply_msg, threadId)
 
     def reply_processed(self, sender, threadId=None):
+        """
+        Reply when the drink is being processed.
+        """
         reply_msg = {}
         reply_msg['to'] = sender
         reply_msg['subject'] = self.drink_subj['confirm']
         reply_msg['body'] = '\r\n'.join([
-            'We have received your order and are mixing your drink!',
-            'Keep posted for your pickup notification.',
+            'We have received your order and are preparing your drink!',
+            'Your name will appear on the pickup screen near the bar when',
+            'your drink is ready.',
             '',
-            'This is an automated message. Replies will not be processed.'
+            'If you\'d like to order another drink, please check the menu',
+            'message in your inbox for available drink options. If you don\'t',
+            'have a drink menu, reply to this message with the word "menu."',
+            'We hope you have a wonderful evening!',
             ])
         self.send_message(reply_msg, threadId)
 
@@ -158,12 +169,12 @@ class OrderHandler(gw.GmailClient):
     # Handler Thread Functions
     def recv_order(self):
         while True:
-            new_messages = handler.wait_new_messages()
+            new_messages = self.wait_new_messages()
             for message_attr in new_messages:
                 # Make something that can be used for analytics.
                 print('Received message.')
-                message = handler.read_message(message_attr)
-                handler.parse_message(message, message_attr['threadId'])
+                message = self.read_message(message_attr)
+                self.parse_message(message, message_attr['threadId'])
 
     def sock_notif(self):
         while True:
