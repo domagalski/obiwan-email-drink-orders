@@ -38,11 +38,16 @@ class OrderHandler(gw.GmailClient):
         self.send_notif = None
 
     def cleanup(self):
-        self.recv_order.terminate()
-        self.send_notif.terminate()
-        self.notif_proc.terminate()
-        self.bar_conn.close()
-        self.bar_sock.close()
+        if self.recv_order is not None:
+            self.recv_order.terminate()
+        if self.send_notif is not None:
+            self.send_notif.terminate()
+        if self.notif_proc is not None:
+            self.notif_proc.terminate()
+        if self.bar_conn is not None:
+            self.bar_conn.close()
+        if self.bar_sock is not None:
+            self.bar_sock.close()
 
     def create_ticket(self, message):
         """
@@ -225,4 +230,5 @@ if __name__ == '__main__':
     try:
         handler.run_handler()
     except KeyboardInterrupt:
+        print()
         handler.cleanup()
