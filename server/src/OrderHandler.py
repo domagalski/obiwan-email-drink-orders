@@ -13,6 +13,16 @@ import multiprocessing as mp
 
 class OrderHandler(gw.GmailClient):
     def __init__(self, gmail_conf, bar_conf):
+        """
+        Initialize the order handler from a gmail configuration file
+        and an order handler configuration file, both in json format.
+
+        bar_conf configuration items:
+            magic_word:         the required word in email subjects
+            bar_acknowledge:    a word to check from the bar client
+            port:               the network port to TCP over
+            buffer_size:        the size of the TCP buffer
+        """
         gw.GmailClient.__init__(self, gmail_conf)
         with open(bar_conf) as f:
             config = json.loads(f.read())
@@ -32,16 +42,15 @@ class OrderHandler(gw.GmailClient):
         # Object items.
         self.active_tickets = {}
         self.bar_sock = None
-        self.bar_addr = None
         self.bar_conn = None
-        self.recv_order = None
-        self.send_notif = None
+        self.recv_order_proc = None
+        self.send_notif_proc = None
 
     def cleanup(self):
-        if self.recv_order is not None:
-            self.recv_order.terminate()
-        if self.send_notif is not None:
-            self.send_notif.terminate()
+        if self.recv_order_proc is not None:
+            self.recv_order_proc.terminate()
+        if self.send_notif_proc is not None:
+            self.send_notif_proc.terminate()
         if self.notif_proc is not None:
             self.notif_proc.terminate()
         if self.bar_conn is not None:
@@ -68,24 +77,22 @@ class OrderHandler(gw.GmailClient):
         order_pkl = pkl.dumps(order, pkl.HIGHEST_PROTOCOL)
 
         # Connect to the bar and send the order
-        while self.bar_addr is None:
-            time.sleep(1)
         self.bar_conn.send(order_pkl)
 
     def run_handler(self):
         # Set up the Gmail robot
         self.init_setup()
-        self.recv_order = mp.Process(target=self.recv_order)
-        self.recv_order.daemon = True
-        self.recv_order.start()
         print('Gmail robot ready.')
-
-        # Set up the messaging sockets.
         self.socket_init()
-        self.send_notif = mp.Process(target=self.send_notif)
-        self.send_notif.daemon = True
-        self.send_notif.start()
         print('Socket interface ready.')
+
+        self.recv_order_proc = mp.Process(target=self.recv_order)
+        self.recv_order_proc.daemon = True
+        self.recv_order_proc.start()
+
+        self.send_notif_proc = mp.Process(target=self.send_notif)
+        self.send_notif_proc.daemon = True
+        self.send_notif_proc.start()
 
         while True:
             time.sleep(60)
@@ -160,12 +167,7 @@ class OrderHandler(gw.GmailClient):
 
     def send_notif(self):
         while True:
-            cli, addr = self.bar_sock.accept()
-            msg = cli.recv(self.buffer_size)
-            msg_id, msg_txt = msg.split(' ', 1)
-            # TODO send out the correct notification
-            cli.close()
-            #self.reply_processed(message['from'], threadId)
+            time.sleep(60)
 
     def socket_init(self):
         """
@@ -178,14 +180,14 @@ class OrderHandler(gw.GmailClient):
         self.bar_sock.listen(1)
 
         # Wait for the bar to connect
-        self.bar_conn, self.bar_addr = self.bar_sock.accept()
+        self.bar_conn, addr = self.bar_sock.accept()
         msg = self.bar_conn.recv(self.buffer_size)
         while msg != self.bar_acknowledge:
             self.bar_conn.close()
-            self.bar_conn, self.bar_addr = self.bar_sock.accept()
+            self.bar_conn, addr = self.bar_sock.accept()
             msg = self.bar_conn.recv(self.buffer_size)
         self.bar_conn.send(self.bar_acknowledge)
-        print('Bar address:', self.bar_addr[0] + ':' + str(self.bar_addr[1]))
+        print('Bar address:', addr[0] + ':' + str(addr[1]))
 
 def filter_message_thread(msg_body):
     # Select only the most recent message in a thread.
