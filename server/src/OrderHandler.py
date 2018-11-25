@@ -44,13 +44,13 @@ class OrderHandler(gw.GmailClient):
         self.bar_sock = None
         self.bar_conn = None
         self.recv_order_proc = None
-        self.send_notif_proc = None
+        self.sock_notif_proc = None
 
     def cleanup(self):
         if self.recv_order_proc is not None:
             self.recv_order_proc.terminate()
-        if self.send_notif_proc is not None:
-            self.send_notif_proc.terminate()
+        if self.sock_notif_proc is not None:
+            self.sock_notif_proc.terminate()
         if self.notif_proc is not None:
             self.notif_proc.terminate()
         if self.bar_conn is not None:
@@ -90,9 +90,9 @@ class OrderHandler(gw.GmailClient):
         self.recv_order_proc.daemon = True
         self.recv_order_proc.start()
 
-        self.send_notif_proc = mp.Process(target=self.send_notif)
-        self.send_notif_proc.daemon = True
-        self.send_notif_proc.start()
+        self.sock_notif_proc = mp.Process(target=self.sock_notif)
+        self.sock_notif_proc.daemon = True
+        self.sock_notif_proc.start()
 
         while True:
             time.sleep(60)
@@ -165,7 +165,7 @@ class OrderHandler(gw.GmailClient):
                 message = handler.read_message(message_attr)
                 handler.parse_message(message, message_attr['threadId'])
 
-    def send_notif(self):
+    def sock_notif(self):
         while True:
             time.sleep(60)
 
