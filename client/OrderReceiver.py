@@ -4,6 +4,8 @@ from __future__ import print_function
 import sys
 import json
 import time
+import zlib
+import gnupg
 import socket
 import pickle as pkl
 import multiprocessing as mp
@@ -24,8 +26,10 @@ class OrderReceiver:
         self.ports = map(int, config['ports'].split())
         self.buffer_size = config['buffer_size']
         self.bar_acknowledge = config['bar_acknowledge']
+        self.gpg_passwd = config['gpg_passwd']
 
         # Object items
+        self.gpg = None
         self.node_procs = []
         self.node_sockets = []
         self.proc_join = None
@@ -40,7 +44,9 @@ class OrderReceiver:
         """
         sock = self.node_sockets[node_idx]
         while True:
-            order = pkl.loads(sock.recv(self.buffer_size))
+            order = sock.recv(self.buffer_size)
+            order = self.gpg.decrypt(order, passphrase=self.gpg_passwd)
+            order = pkl.loads(zlib.decompress(order.data))
             order['node'] = node_idx
             self.recv_port.send(order)
 
@@ -54,6 +60,7 @@ class OrderReceiver:
         """
         Initialize the network connection with the email server.
         """
+        self.gpg = gnupg.GPG()
         # Set up the socket receiver threads.
         self.proc_join, self.recv_port = mp.Pipe(False)
 

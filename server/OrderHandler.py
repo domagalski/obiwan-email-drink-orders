@@ -5,6 +5,8 @@ import os
 import sys
 import json
 import time
+import zlib
+import gnupg
 import random
 import socket
 import pickle as pkl
@@ -30,6 +32,7 @@ class OrderHandler(gw.GmailClient):
         self.bar_acknowledge = config['bar_acknowledge']
         self.port = config['port']
         self.buffer_size = config['buffer_size']
+        self.gpg_passwd = config['gpg_passwd']
 
         # Set up the subjects for automated emails.
         self.drink_subj = {}
@@ -40,6 +43,7 @@ class OrderHandler(gw.GmailClient):
         self.drink_subj['confirm'] += '(magic word: %s)' % self.magic_word
 
         # Object items.
+        self.gpg = None
         self.active_tickets = {}
         self.bar_sock = None
         self.bar_conn = None
@@ -74,12 +78,15 @@ class OrderHandler(gw.GmailClient):
         else:
             order['from'] = message['from']
         order['body'] = message['body']
-        order_pkl = pkl.dumps(order, pkl.HIGHEST_PROTOCOL)
+        order_pkl = zlib.compress(pkl.dumps(order, pkl.HIGHEST_PROTOCOL))
+        encrypted = self.gpg.encrypt(order_pkl, None, symmetric='AES256',
+                passphrase=self.gpg_passwd, armor=False)
 
         # Connect to the bar and send the order
-        self.bar_conn.send(order_pkl)
+        self.bar_conn.send(encrypted.data)
 
     def run_handler(self):
+        self.gpg = gnupg.GPG()
         # Set up the Gmail robot
         self.init_setup()
         print('Gmail robot ready.')
