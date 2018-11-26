@@ -207,6 +207,88 @@ class OrderHandler(gw.GmailClient):
         self.bar_conn.send(self.bar_acknowledge)
         print('Bar address:', addr[0] + ':' + str(addr[1]))
 
+class OfflineDebug:
+    def __init__(self, bar_conf):
+        """
+        Set up an offline debug simulator
+        """
+        with open(bar_conf) as f:
+            config = json.loads(f.read())
+        self.magic_word = config['magic_word']
+        self.bar_acknowledge = config['bar_acknowledge']
+        self.port = config['port']
+        self.buffer_size = config['buffer_size']
+        self.gpg_passwd = config['gpg_passwd']
+
+        # Object items.
+        self.gpg = None
+        self.active_tickets = {}
+        self.bar_sock = None
+        self.bar_conn = None
+        self.recv_order_proc = None
+        self.sock_notif_proc = None
+
+    def cleanup(self):
+        if self.recv_order_proc is not None:
+            self.recv_order_proc.terminate()
+        if self.sock_notif_proc is not None:
+            self.sock_notif_proc.terminate()
+        if self.bar_conn is not None:
+            self.bar_conn.close()
+        if self.bar_sock is not None:
+            self.bar_sock.close()
+
+    def create_ticket(self):
+        """
+        Create an order ticket and send it to the bar.
+        """
+        # Store an order in the open order queue
+        ticket_id = str(int(time.time())) + '.'
+        ticket_id += str(random.randint(1 << 10, 1 << 20))
+        self.active_tickets[ticket_id] = 'simulated_ticket'
+
+        # Create a pickle of minimal information to send to the bar
+        order = {'id': ticket_id, 'from': 'OfflineDebug:'+str(self.port)}
+        order['body'] = ticket_id
+        order_pkl = zlib.compress(pkl.dumps(order, pkl.HIGHEST_PROTOCOL))
+        encrypted = self.gpg.encrypt(order_pkl, None, symmetric='AES256',
+                passphrase=self.gpg_passwd, armor=False)
+
+        # Connect to the bar and send the order
+        self.bar_conn.send(encrypted.data)
+        print('Sent simulated ticket.')
+
+    def socket_init(self):
+        """
+        Initialize the network communications between the email robot
+        and the bar.
+        """
+        self.bar_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        host = '127.0.0.1'
+        self.bar_sock.bind((host, self.port))
+        self.bar_sock.listen(1)
+
+        # Wait for the bar to connect
+        self.bar_conn, addr = self.bar_sock.accept()
+        msg = self.bar_conn.recv(self.buffer_size)
+        while msg != self.bar_acknowledge:
+            self.bar_conn.close()
+            self.bar_conn, addr = self.bar_sock.accept()
+            msg = self.bar_conn.recv(self.buffer_size)
+        self.bar_conn.send(self.bar_acknowledge)
+        print('Bar address:', addr[0] + ':' + str(addr[1]))
+
+    def run_handler(self):
+        self.gpg = gnupg.GPG()
+
+        self.socket_init()
+        print('Socket interface ready.')
+
+        while True:
+            time.sleep(random.randint(10,20))
+            self.create_ticket()
+
+
 def filter_message_thread(msg_body):
     # Select only the most recent message in a thread.
     msg_body = msg_body.replace('\r\n', '\n')
@@ -242,11 +324,17 @@ def filter_message_thread(msg_body):
 
 if __name__ == '__main__':
     # Quick test to send an instant reply to a message
-    assert len(sys.argv) == 3, 'Need configuration files.'
-    gmail_conf = sys.argv[1]
-    bar_conf = sys.argv[2]
+    assert len(sys.argv) > 1, 'Need configuration files.'
 
-    handler = OrderHandler(gmail_conf, bar_conf)
+    # Offline Debug vs Production
+    if len(sys.argv) == 2:
+        bar_conf = sys.argv[1]
+        handler = OfflineDebug(bar_conf)
+    else:
+        gmail_conf = sys.argv[1]
+        bar_conf = sys.argv[2]
+        handler = OrderHandler(gmail_conf, bar_conf)
+
     try:
         handler.run_handler()
     except KeyboardInterrupt:
