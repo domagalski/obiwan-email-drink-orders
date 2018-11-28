@@ -41,10 +41,14 @@ class OrderHandler(gw.GmailClient):
         self.drink_subj['confirm'] = self.send_name
         self.drink_subj['confirm'] += ': Drink order received! '
         self.drink_subj['confirm'] += '(magic word: %s)' % self.magic_word
+        self.drink_subj['deny'] = self.send_name
+        self.drink_subj['deny'] += ': We\'re sorry. We cannot complete '
+        self.drink_subj['deny'] += 'your order. '
+        self.drink_subj['deny'] += '(magic word: %s)' % self.magic_word
 
         # Object items.
         self.gpg = None
-        self.active_tickets = {}
+        self.active_tickets = '/tmp/' + self.email_name.split('@')[0] + '.pkl'
         self.bar_sock = None
         self.bar_conn = None
         self.recv_order_proc = None
@@ -69,7 +73,13 @@ class OrderHandler(gw.GmailClient):
         # Store an order in the open order queue
         ticket_id = str(int(time.time())) + '.'
         ticket_id += str(random.randint(1 << 10, 1 << 20))
-        self.active_tickets[ticket_id] = message
+
+        # Save to tickets file
+        with open(self.active_tickets, 'rb') as f:
+            tickets = pkl.load(f)
+        tickets[ticket_id] = message
+        with open(self.active_tickets, 'wb') as f:
+            pkl.dump(tickets, f)
 
         # Create a pickle of minimal information to send to the bar
         order = {'id': ticket_id}
@@ -86,19 +96,22 @@ class OrderHandler(gw.GmailClient):
         self.bar_conn.send(encrypted.data)
 
     def run_handler(self):
+        # Basic setup
         self.gpg = gnupg.GPG()
-        # Set up the Gmail robot
-        self.init_setup()
+        with open(self.active_tickets, 'wb') as f:
+            pkl.dump({}, f)
+
+        self.gmail_setup()
         print('Gmail robot ready.')
         self.socket_init()
         print('Socket interface ready.')
 
         self.recv_order_proc = mp.Process(target=self.recv_order)
-        self.recv_order_proc.daemon = True
+        self.daemon = True
         self.recv_order_proc.start()
 
         self.sock_notif_proc = mp.Process(target=self.sock_notif)
-        self.sock_notif_proc.daemon = True
+        self.daemon = True
         self.sock_notif_proc.start()
 
         while True:
@@ -128,6 +141,38 @@ class OrderHandler(gw.GmailClient):
             self.create_ticket(message)
         print('Sent reply.')
 
+    def reply_deny(self, ticket_id, reason):
+        """
+        Reply when the drink cannot be completed.
+        """
+        with open(self.active_tickets, 'rb') as f:
+            tickets = pkl.load(f)
+        sender = tickets[ticket_id]['from']
+        drink = tickets[ticket_id]['body'].replace('\r\n', '\n').split('\n')
+        reply_msg = {}
+        reply_msg['to'] = sender
+        reply_msg['subject'] = self.drink_subj['deny']
+        reply_msg['body'] = '\r\n'.join([
+            'We\'re sorry. Unfortunately we cannot complete your order. Please'
+            ' see below for more details:',
+            '',
+            'Order Summary:'])
+        for line in drink:
+            reply_msg['body'] += '\r\n' + line
+        reply_msg['body'] += '\r\n'.join([
+            '',
+            'Cancellation reason:',
+            reason,
+            ])
+        reply_msg['body'] += '\r\n'.join([
+            '', '',
+            'If you\'d like to order another drink, please check the menu '
+            'message in your inbox for available drink options. If you don\'t '
+            'have a drink menu, reply to this message with the word "menu." '
+            'We hope you have a wonderful evening!',
+            ])
+        self.send_message(reply_msg)
+
     def reply_menu(self, sender, threadId=None):
         """
         Reply to a menu request
@@ -147,34 +192,46 @@ class OrderHandler(gw.GmailClient):
         reply_msg['subject'] = 'ERROR: Invalid Message Subject: '
         reply_msg['subject'] += subject
         reply_msg['body'] = '\r\n'.join([
-            'ERROR: Message subject does not contain the secret word.',
+            'ERROR: Message subject does not contain the secret word. '
             'Please send another order with the secret word in the subject.',
             '',
             '"Uh uh uh! You didn\'t say the magic word!" - Nedry'])
         self.send_message(reply_msg, threadId)
 
-    def reply_processed(self, sender, threadId=None):
+    def reply_processed(self, ticket_id):
         """
         Reply when the drink is being processed.
         """
+        with open(self.active_tickets, 'rb') as f:
+            tickets = pkl.load(f)
+        sender = tickets[ticket_id]['from']
+        drink = tickets[ticket_id]['body'].replace('\r\n', '\n').split('\n')
         reply_msg = {}
         reply_msg['to'] = sender
         reply_msg['subject'] = self.drink_subj['confirm']
         reply_msg['body'] = '\r\n'.join([
-            'We have received your order and are preparing your drink!',
-            'Your name will appear on the pickup screen near the bar when',
+            'We have received your order and are preparing your drink! '
+            'Your name will appear on the pickup screen near the bar when '
             'your drink is ready.',
             '',
-            'If you\'d like to order another drink, please check the menu',
-            'message in your inbox for available drink options. If you don\'t',
-            'have a drink menu, reply to this message with the word "menu."',
+            'Order Summary:'])
+        for line in drink:
+            reply_msg['body'] += '\r\n' + line
+        reply_msg['body'] += '\r\n'.join([
+            '',
+            'If you\'d like to order another drink, please check the menu '
+            'message in your inbox for available drink options. If you don\'t '
+            'have a drink menu, reply to this message with the word "menu." '
             'We hope you have a wonderful evening!',
             ])
-        self.send_message(reply_msg, threadId)
+        self.send_message(reply_msg)
 
     #---------------------------------------------------------------------------
     # Handler Thread Functions
     def recv_order(self):
+        """
+        Receive orders from the email robot
+        """
         while True:
             new_messages = self.wait_new_messages()
             for message_attr in new_messages:
@@ -184,8 +241,38 @@ class OrderHandler(gw.GmailClient):
                 self.parse_message(message, message_attr['threadId'])
 
     def sock_notif(self):
+        """
+        Get notifications from the bartender software
+        """
         while True:
-            time.sleep(60)
+            notif = self.bar_conn.recv(self.buffer_size)
+            if not len(notif): # Bartender closed.
+                self.bar_conn.close()
+                self.bar_sock.close()
+                print('Error connecting to the bartender.')
+                print('Please Ctrl-C this program and restart it.')
+                return
+            notif = self.gpg.decrypt(notif, passphrase=self.gpg_passwd)
+            notif = pkl.loads(zlib.decompress(notif.data))
+            status = notif['status']
+            if status == 'accepted':
+                self.reply_processed(notif['id'])
+                continue
+            elif status == 'cancelled':
+                self.reply_deny(notif['id'], notif['reason'])
+            elif status == 'pickup':
+                # Pickup just removes the drink from the ticket list.
+                pass
+            else:
+                print('Invalid notification:')
+                print(notif)
+                continue
+
+            with open(self.active_tickets, 'rb') as f:
+                tickets = pkl.load(f)
+            tickets.pop(notif['id'], None)
+            with open(self.active_tickets, 'wb') as f:
+                pkl.dump(tickets, f)
 
     def socket_init(self):
         """

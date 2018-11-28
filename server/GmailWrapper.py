@@ -9,6 +9,7 @@ import json
 import time
 import email
 import base64
+import smtplib
 import pickle as pkl
 import multiprocessing as mp
 from googleapiclient.discovery import build
@@ -34,6 +35,7 @@ class GmailClient:
         self.subscription_name = config['subscription_name']
         self.email_name = config['email_name']
         self.send_name = config['send_name']
+        self.password = config['password']
 
         self.send_name_email = self.send_name + ' <%s>' % self.email_name
         self.topic_name_full = 'projects/%s/topics/%s' % (self.project_id, self.topic_name)
@@ -65,7 +67,7 @@ class GmailClient:
                     messages.append(msg['message'])
         return messages
 
-    def init_setup(self, only_authorize=False):
+    def gmail_setup(self, only_authorize=False):
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
         # time.
@@ -157,16 +159,24 @@ class GmailClient:
         return msg_compact
 
     def send_message(self, message, threadId=None):
+        """
+        Use SMTP to send email. Don't use the Gmail API since that
+        can cause conflicts with the threading.
+        """
         mime_msg = MIMEText(message['body'])
         mime_msg['To'] = message['to']
         mime_msg['From'] = self.send_name_email
         mime_msg['Subject'] = message['subject']
         msg_string = mime_msg.as_string()
 
-        msg_raw = {'raw': base64.urlsafe_b64encode(msg_string)}
-        if threadId is not None:
-            msg_raw['threadId'] = threadId
-        message = self.user_msg.send(userId='me', body=msg_raw).execute()
+        toaddrs = message['to'].split('<')[-1].split('>')[0]
+        username = self.email_name
+        password = self.password
+        server = smtplib.SMTP('smtp.gmail.com:587')
+        server.ehlo()
+        server.starttls()
+        server.login(username, password)
+        server.sendmail(username, toaddrs, msg_string)
 
     def update_hist(self, msg_data):
         # poll history changes since the last recorded history ID
@@ -227,7 +237,7 @@ if __name__ == '__main__':
     conf_file = sys.argv[1]
 
     gmail_client = GmailClient(conf_file)
-    gmail_client.init_setup()
+    gmail_client.gmail_setup()
     new_messages = gmail_client.wait_new_messages()
     for message_attr in new_messages:
         message = gmail_client.read_message(message_attr)

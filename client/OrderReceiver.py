@@ -56,6 +56,19 @@ class OrderReceiver:
         """
         return self.proc_join.recv()
 
+    def send_notif(self, node_idx, notif):
+        """
+        Send a notification back to the email robot.
+        """
+        # Encrypt a notification
+        notif = zlib.compress(pkl.dumps(notif, pkl.HIGHEST_PROTOCOL))
+        encrypted = self.gpg.encrypt(notif, None, symmetric='AES256',
+                passphrase=self.gpg_passwd, armor=False)
+
+        # Send the notification to the server.
+        sock = self.node_sockets[node_idx]
+        sock.send(encrypted.data)
+
     def socket_init(self):
         """
         Initialize the network connection with the email server.

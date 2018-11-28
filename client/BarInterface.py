@@ -4,6 +4,7 @@ from __future__ import print_function
 import os
 import sys
 import time
+import zlib
 import curses
 import threading as th
 import multiprocessing as mp
@@ -112,7 +113,7 @@ class BarInterface(OrderReceiver):
             if key == ord('a') or key == ord('a'):
                 self.order_win_accept()
             if key == ord('d') or key == ord('D'):
-                self.order_win_decline()
+                self.order_win_cancel()
 
     def main(self):
         """
@@ -126,8 +127,7 @@ class BarInterface(OrderReceiver):
             if event[0] == 'order':
                 self.display_order(event[1])
             else:
-                if self.process_keypress(event[1]) == ord('q'):
-                    return
+                self.process_keypress(event[1])
 
     def order_win_accept(self):
         """
@@ -135,9 +135,14 @@ class BarInterface(OrderReceiver):
         """
         if not len(self.drinks_waiting):
             return
-        # TODO notify the email server
+        # Update the UI
         self.order_accepted = True
         self.display_order()
+
+        # notify the email server
+        order = self.drinks_waiting[0]
+        notif = {'id': order['id'], 'status': 'accepted'}
+        self.send_notif(order['node'], notif)
 
     def order_win_cancel(self):
         """
@@ -145,23 +150,15 @@ class BarInterface(OrderReceiver):
         """
         if not len(self.drinks_waiting):
             return
-        # TODO notify the email server
         # TODO make a pop-up confirming the reason for the cancel
         self.order_accepted = False
-        self.drinks_waiting.pop(0)
+        order = self.drinks_waiting.pop(0)
         self.display_order()
 
-    def order_win_decline(self):
-        """
-        Deny the current drink in the order queue.
-        """
-        if not len(self.drinks_waiting):
-            return
-        # TODO notify the email server
-        # TODO make a pop-up confirming the reason for the decline
-        self.order_accepted = False
-        self.drinks_waiting.pop(0)
-        self.display_order()
+        # notify the email server
+        notif = {'id': order['id'], 'status': 'cancelled'}
+        notif['reason'] = 'unspecified'
+        self.send_notif(order['node'], notif)
 
     def order_win_send_to_pickup(self):
         """
@@ -171,8 +168,12 @@ class BarInterface(OrderReceiver):
             return
         # Update the pickup screen
         self.order_accepted = False
-        self.drinks_waiting.pop(0)
+        order = self.drinks_waiting.pop(0)
         self.display_order()
+
+        # notify the email server
+        notif = {'id': order['id'], 'status': 'pickup'}
+        self.send_notif(order['node'], notif)
 
     def process_keypress(self, key):
         """
@@ -275,6 +276,7 @@ class BarInterface(OrderReceiver):
         self.count_win.addstr(1, 3+len(count_str), n_drinks, col_white_bold)
         self.stdscr.refresh()
         self.count_win.refresh()
+
 
 # Set up the bartender interface.
 if __name__ == '__main__':
