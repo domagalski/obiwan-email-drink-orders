@@ -306,18 +306,18 @@ class OfflineDebug:
         self.port = config['port']
         self.buffer_size = config['buffer_size']
         self.gpg_passwd = config['gpg_passwd']
+        self.active_tickets = '/tmp/offline-debug-%d.pkl' % self.port
 
         # Object items.
         self.gpg = None
-        self.active_tickets = {}
         self.bar_sock = None
         self.bar_conn = None
         self.recv_order_proc = None
         self.sock_notif_proc = None
 
     def cleanup(self):
-        if self.recv_order_proc is not None:
-            self.recv_order_proc.terminate()
+        if self.fake_order_proc is not None:
+            self.fake_order_proc.terminate()
         if self.sock_notif_proc is not None:
             self.sock_notif_proc.terminate()
         if self.bar_conn is not None:
@@ -332,11 +332,18 @@ class OfflineDebug:
         # Store an order in the open order queue
         ticket_id = str(int(time.time())) + '.'
         ticket_id += str(random.randint(1 << 10, 1 << 20))
-        self.active_tickets[ticket_id] = 'simulated_ticket'
 
         # Create a pickle of minimal information to send to the bar
         order = {'id': ticket_id, 'from': 'OfflineDebug:'+str(self.port)}
         order['body'] = ticket_id
+
+        # Save to tickets file
+        with open(self.active_tickets, 'rb') as f:
+            tickets = pkl.load(f)
+        tickets[ticket_id] = order
+        with open(self.active_tickets, 'wb') as f:
+            pkl.dump(tickets, f)
+
         order_pkl = zlib.compress(pkl.dumps(order, pkl.HIGHEST_PROTOCOL))
         encrypted = self.gpg.encrypt(order_pkl, None, symmetric='AES256',
                 passphrase=self.gpg_passwd, armor=False)
@@ -344,6 +351,11 @@ class OfflineDebug:
         # Connect to the bar and send the order
         self.bar_conn.send(encrypted.data)
         print('Sent simulated ticket:', ticket_id)
+
+    def fake_order(self):
+        while True:
+            time.sleep(random.randint(10,20))
+            self.create_ticket()
 
     def socket_init(self):
         """
@@ -367,13 +379,54 @@ class OfflineDebug:
 
     def run_handler(self):
         self.gpg = gnupg.GPG()
+        with open(self.active_tickets, 'wb') as f:
+            pkl.dump({}, f)
 
         self.socket_init()
         print('Socket interface ready.')
 
+        self.fake_order_proc = mp.Process(target=self.fake_order)
+        self.fake_order_proc.daemon = True
+        self.fake_order_proc.start()
+
+        self.sock_notif_proc = mp.Process(target=self.sock_notif)
+        self.sock_notif_proc.daemon = True
+        self.sock_notif_proc.start()
+
         while True:
-            time.sleep(random.randint(10,20))
-            self.create_ticket()
+            time.sleep(60)
+
+    def sock_notif(self):
+        """
+        Get notifications from the bartender software
+        """
+        while True:
+            notif = self.bar_conn.recv(self.buffer_size)
+            if not len(notif): # Bartender closed.
+                self.bar_conn.close()
+                self.bar_sock.close()
+                print('Error connecting to the bartender.')
+                print('Please Ctrl-C this program and restart it.')
+                return
+            notif = self.gpg.decrypt(notif, passphrase=self.gpg_passwd)
+            notif = pkl.loads(zlib.decompress(notif.data))
+
+            print(notif)
+            status = notif['status']
+            if status == 'accepted':
+                continue
+            elif status == 'cancelled' or status == 'pickup':
+                pass
+            else:
+                print('Invalid notification:')
+                print(notif)
+                continue
+
+            with open(self.active_tickets, 'rb') as f:
+                tickets = pkl.load(f)
+            tickets.pop(notif['id'], None)
+            with open(self.active_tickets, 'wb') as f:
+                pkl.dump(tickets, f)
 
 
 def filter_message_thread(msg_body):
