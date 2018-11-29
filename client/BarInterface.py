@@ -15,10 +15,16 @@ class BarInterface(OrderReceiver):
         OrderReceiver.__init__(self, conf_file)
 
         # Object items
+        self.pu_win_rows = 0
+        self.cursor_pos = 0
+        self.cursor_row = 0
+        self.cursor_offset = 0
         self.win_selected = 'order'
         self.order_accepted = False
         self.drinks_waiting = []
-        self.drinks_pickup = {}
+        self.drinks_pickup = []
+        self.col_white = None
+        self.col_selected = None
         self._ev_recv = None
         self._ev_getch = None
         self.get_event = None
@@ -48,8 +54,6 @@ class BarInterface(OrderReceiver):
         """
         Display an order on the window.
         """
-        col_white = curses.color_pair(7)
-        col_white_bold = curses.color_pair(7) | curses.A_BOLD
         self.update_drink_wait_count()
 
         if order is not None:
@@ -64,9 +68,13 @@ class BarInterface(OrderReceiver):
                 self.update_drink_wait_count()
 
         self.order_win.erase()
-        self.order_win.bkgdset(' ', curses.color_pair(4))
+        if self.win_selected == 'order':
+            self.order_win.bkgdset(' ', self.col_selected)
+        else:
+            self.order_win.bkgdset(' ', self.col_white)
         self.order_win.border(0)
         self.show_order_win_keys()
+
         if order is None:
             self.stdscr.refresh()
             self.order_win.refresh()
@@ -74,15 +82,46 @@ class BarInterface(OrderReceiver):
 
         patron = order['from']
         drink_request = order['body'].replace('\r\n', '\n').split('\n')
-        self.order_win.addstr(2, 3, 'Patron:', col_white_bold)
-        self.order_win.addstr(3, 3, patron, col_white)
-        self.order_win.addstr(5, 3, 'Drink request:', col_white_bold)
+        self.order_win.addstr(2, 3, 'Patron:', self.col_white_bold)
+        self.order_win.addstr(3, 3, patron, self.col_white)
+        self.order_win.addstr(5, 3, 'Drink request:', self.col_white_bold)
         for i, line in enumerate(drink_request):
-            self.order_win.addstr(6+i, 3, line, col_white)
+            self.order_win.addstr(6+i, 3, line, self.col_white)
         self.stdscr.refresh()
         self.order_win.refresh()
 
+    def display_pickup(self):
+        """
+        Display the pickup window.
+        """
+        # Clear the window first
+        self.pickup_win.erase()
+        if self.win_selected == 'pickup':
+            self.order_win.bkgdset(' ', self.col_white)
+            self.pickup_win.bkgdset(' ', self.col_selected)
+        else:
+            self.order_win.bkgdset(' ', self.col_selected)
+            self.pickup_win.bkgdset(' ', self.col_white)
+        self.pickup_win.border(0)
+        self.show_pickup_win_keys()
+
+        self.pickup_win.addstr(2, 3, 'Pickup Queue:', self.col_white_bold)
+        for i in range(min(len(self.drinks_pickup), self.pu_win_rows)):
+            patron = self.drinks_pickup[i+self.cursor_offset]
+            item_name = patron['name'] + ' (%d)' % len(patron['orders'])
+            if self.win_selected == 'pickup' and i == self.cursor_pos:
+                self.pickup_win.addstr(3+i, 3, item_name, self.col_cursor)
+            else:
+                self.pickup_win.addstr(3+i, 3, item_name, self.col_white)
+
+        self.stdscr.refresh()
+        self.pickup_win.refresh()
+
     def events_watchdog_init(self):
+        """
+        Start threads to watch for events like key presses and new
+        drink tickets arriving.
+        """
         self.get_event, self.notif_event = mp.Pipe(False)
         # Event processes to monitor
         self._ev_recv = mp.Process(target=self._events_recv_order)
@@ -93,12 +132,19 @@ class BarInterface(OrderReceiver):
         self._ev_getch.start()
 
     def _events_recv_order(self):
+        """
+        Watch for new orders
+        """
         while True:
             self.notif_event.send(('order', self.recv_order()))
 
     def _events_get_char(self):
+        """
+        Watch for key presses.
+        """
         while True:
             self.notif_event.send(('input', self.stdscr.getch()))
+        self.send_notif(order['node'], notif)
 
     def keypress_order_win(self, key):
         """
@@ -115,12 +161,36 @@ class BarInterface(OrderReceiver):
             if key == ord('d') or key == ord('D'):
                 self.order_win_cancel()
 
+    def keypress_pickup_win(self, key):
+        """
+        Keypresses for the pickup window.
+        """
+        n_drinks = len(self.drinks_pickup) - 1
+        self.cursor_row = self.cursor_offset + self.cursor_pos
+
+        # Scrolling down
+        if key == ord('j') or key == curses.KEY_DOWN:
+            end_row = self.pu_win_rows - 1
+            if self.cursor_pos == end_row and self.cursor_row < n_drinks:
+                self.cursor_offset += 1
+            self.cursor_pos = min(self.cursor_pos+1, end_row, n_drinks)
+
+        # Scrolling up
+        if key == ord('k') or key == curses.KEY_UP:
+            if self.cursor_pos == 0 and self.cursor_row > 0:
+                self.cursor_offset = max(self.cursor_offset-1, 0)
+            self.cursor_pos = max(self.cursor_pos-1, 0)
+
+        # Mark the drink as picked up
+        if key == ord('p'):
+            self.pickup_drink()
+
+        self.display_pickup()
+
     def main(self):
         """
         Run the bartender interface.
         """
-        col_white = curses.color_pair(7)
-        col_white_bold = curses.color_pair(7) | curses.A_BOLD
         self.update_drink_wait_count()
         while True:
             event = self.get_event.recv()
@@ -171,9 +241,49 @@ class BarInterface(OrderReceiver):
         order = self.drinks_waiting.pop(0)
         self.display_order()
 
+        # Add drink to the pickup queue
+        new_drink = {'id': order['id'], 'drink': order['body']}
+        new_drink['node'] = order['node']
+        not_added = True
+        for drink in self.drinks_pickup:
+            if order['from'] == drink['name']:
+                drink['orders'].append(new_drink)
+                not_added = False # LOL, double negative
+
+        if not_added:
+            drink = {'name':order['from'], 'orders':[new_drink]}
+            self.drinks_pickup.append(drink)
+
+        self.display_pickup()
+
+    def pickup_drink(self):
+        """
+        Notify when someone picks up their drinks
+        """
+        if not len(self.drinks_pickup):
+            return
+
+        # Remove the drink from the pickup list and
+        pickup_order = self.drinks_pickup.pop(self.cursor_row)
+        n_drinks = len(self.drinks_pickup)
+        end_row = self.pu_win_rows - 1
+
+        # decrement the cursor offset if at the last drink
+        if self.cursor_row == n_drinks:
+            self.cursor_offset = max(0, self.cursor_offset-1)
+            self.cursor_row = self.cursor_pos + self.cursor_offset
+
+        # Make sure the cursor position and offset stays in list boundaries
+        n_drinks = max(0, n_drinks - 1)
+        self.cursor_pos = min(self.cursor_pos, self.cursor_row, n_drinks)
+        self.cursor_row = self.cursor_pos + self.cursor_offset
+        self.cursor_offset = min(self.cursor_offset, n_drinks-end_row)
+        self.cursor_offset = max(0, self.cursor_offset)
+
         # notify the email server
-        notif = {'id': order['id'], 'status': 'pickup'}
-        self.send_notif(order['node'], notif)
+        for order in pickup_order['orders']:
+            notif = {'id': order['id'], 'status': 'pickup'}
+            self.send_notif(order['node'], notif)
 
     def process_keypress(self, key):
         """
@@ -182,25 +292,40 @@ class BarInterface(OrderReceiver):
         if self.win_selected == 'order':
             self.keypress_order_win(key)
         else:
-            pass
-        return key
+            self.keypress_pickup_win(key)
+
+        # Window selection
+        if key == curses.KEY_LEFT:
+            self.win_selected = 'order'
+        elif key == curses.KEY_RIGHT:
+            self.win_selected = 'pickup'
+
+        self.display_order()
+        self.display_pickup()
 
     def show_order_win_keys(self):
         """
         Show the keys for the order window.
         """
         nrows, _ = self.size
-        col_white = curses.color_pair(7)
-        col_white_bold = curses.color_pair(7) | curses.A_BOLD
 
         if self.order_accepted:
-            order_keys = ('Keys:', '(c) Cancel\t(s) Send to pickup')
+            ord_keys = '(c) Cancel\t(s) Send to pickup'
         else:
-            order_keys = ('Keys:', '(a) Accept\t(d) Decline')
-        nch = len(order_keys[0]) + 1
+            ord_keys = '(a) Accept\t(d) Decline'
 
-        self.order_win.addstr(nrows-4-3-2, 3, order_keys[0], col_white_bold)
-        self.order_win.addstr(nrows-4-3-2, 3+nch, order_keys[1], col_white)
+        self.order_win.addstr(nrows-4-3-2, 3, 'Keys:', self.col_white_bold)
+        self.order_win.addstr(nrows-4-3-2, 3+6, ord_keys, self.col_white)
+
+    def show_pickup_win_keys(self):
+        """
+        Show the keys for the order window.
+        """
+        nrows, _ = self.size
+
+        pu_keys = '(j/k) Scroll up/down\t(p) Mark as picked up'
+        self.pickup_win.addstr(nrows-4-2, 3, 'Keys:', self.col_white_bold)
+        self.pickup_win.addstr(nrows-4-2, 3+6, pu_keys, self.col_white)
 
     def ui_close(self):
         """
@@ -233,7 +358,15 @@ class BarInterface(OrderReceiver):
             curses.init_pair(6, curses.COLOR_CYAN,    curses.COLOR_BLACK)
             curses.init_pair(7, curses.COLOR_WHITE,   curses.COLOR_BLACK)
 
-        self.stdscr.bkgdset(' ', curses.color_pair(7))
+        self.col_white = curses.color_pair(7)
+        self.col_white_bold = curses.color_pair(7) | curses.A_BOLD
+        self.col_selected = curses.color_pair(2)
+        self.col_cursor  = curses.color_pair(3)
+        self.col_cursor |= curses.A_BOLD
+        self.col_cursor |= curses.A_REVERSE
+
+
+        self.stdscr.bkgdset(' ', self.col_white)
         self.stdscr.border(0)
         self.stdscr.keypad(1)
 
@@ -244,18 +377,17 @@ class BarInterface(OrderReceiver):
             self.stdscr.addstr(i+1, 1, (ncols-2) * ' ')
         self.size = (nrows, ncols)
 
-        self.pickup_win = curses.newwin(nrows-4, ncols/2-6, 2, ncols/2+2)
-        self.pickup_win.bkgdset(' ', curses.color_pair(7))
-        self.pickup_win.border(0)
-        self.pickup_win.keypad(1)
-
         self.count_win = curses.newwin(3, ncols/2-6, 2+nrows-4-3, 4)
-        self.count_win.bkgdset(' ', curses.color_pair(7))
+        self.count_win.bkgdset(' ', self.col_white)
         self.count_win.border(0)
         self.count_win.keypad(1)
 
         self.order_win = curses.newwin(nrows-4-3, ncols/2-6, 2, 4)
         self.display_order()
+
+        self.pickup_win = curses.newwin(nrows-4, ncols/2-6, 2, ncols/2+2)
+        self.pu_win_rows = nrows - 4 - 6
+        self.display_pickup()
 
         self.stdscr.refresh()
         self.order_win.refresh()
@@ -267,13 +399,11 @@ class BarInterface(OrderReceiver):
         Update the count window to the number of drink orders waiting.
         """
         count_str = 'Drink orders waiting: '
-        n_drinks = str(max(0, len(self.drinks_waiting)-1))
-        col_white = curses.color_pair(7)
-        col_white_bold = curses.color_pair(7) | curses.A_BOLD
+        n_dr = str(max(0, len(self.drinks_waiting)-1))
         nrows, ncols = self.size
-        self.count_win.addstr(1, 3, ' '*(ncols/2-10), col_white)
-        self.count_win.addstr(1, 3, count_str, col_white_bold)
-        self.count_win.addstr(1, 3+len(count_str), n_drinks, col_white_bold)
+        self.count_win.addstr(1, 3, ' '*(ncols/2-10), self.col_white)
+        self.count_win.addstr(1, 3, count_str, self.col_white_bold)
+        self.count_win.addstr(1, 3+len(count_str), n_dr, self.col_white_bold)
         self.stdscr.refresh()
         self.count_win.refresh()
 
