@@ -110,12 +110,9 @@ class OrderHandler(gw.GmailClient):
         self.daemon = True
         self.recv_order_proc.start()
 
-        self.sock_notif_proc = mp.Process(target=self.sock_notif)
-        self.daemon = True
-        self.sock_notif_proc.start()
-
-        while True:
-            time.sleep(60)
+        self.sock_notif()
+        print('Closing connection.')
+        self.cleanup()
 
     def parse_message(self, message, threadId=None):
         """
@@ -247,10 +244,6 @@ class OrderHandler(gw.GmailClient):
         while True:
             notif = self.bar_conn.recv(self.buffer_size)
             if not len(notif): # Bartender closed.
-                self.bar_conn.close()
-                self.bar_sock.close()
-                print('Error connecting to the bartender.')
-                print('Please Ctrl-C this program and restart it.')
                 return
             notif = self.gpg.decrypt(notif, passphrase=self.gpg_passwd)
             notif = pkl.loads(zlib.decompress(notif.data))
