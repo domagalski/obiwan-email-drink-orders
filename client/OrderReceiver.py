@@ -27,8 +27,10 @@ class OrderReceiver:
         self.buffer_size = config['buffer_size']
         self.bar_acknowledge = config['bar_acknowledge']
         self.gpg_passwd = config['gpg_passwd']
+        self.pickup_port = config['pickup_port']
 
         # Object items
+        self.pickup_screen = "127.0.0.1"
         self.gpg = None
         self.node_procs = []
         self.node_sockets = []
@@ -90,6 +92,13 @@ class OrderReceiver:
             proc.daemon = True
             proc.start()
             self.node_procs.append(proc)
+
+        # Connect to the pickup window screen.
+        self.pickup_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.pickup_sock.connect((self.pickup_screen, self.pickup_port))
+        self.pickup_sock.send(self.bar_acknowledge)
+        if self.pickup_sock.recv(self.buffer_size) != self.bar_acknowledge:
+            raise ValueError('Invalid acknowledgement.')
 
 if __name__ == '__main__':
     # Quick test of the essential functionality

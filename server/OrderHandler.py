@@ -335,6 +335,7 @@ class OfflineDebug:
 
         # Create a pickle of minimal information to send to the bar
         order = {'id': ticket_id, 'from': 'OfflineDebug:'+str(self.port)}
+        order['from'] += '-' + str(random.random())
         order['body'] = ticket_id
 
         # Save to tickets file
@@ -354,7 +355,8 @@ class OfflineDebug:
 
     def fake_order(self):
         while True:
-            time.sleep(random.randint(10,20))
+            time.sleep(4)
+            #time.sleep(random.randint(10,20))
             self.create_ticket()
 
     def socket_init(self):
@@ -382,6 +384,7 @@ class OfflineDebug:
         with open(self.active_tickets, 'wb') as f:
             pkl.dump({}, f)
 
+        print('Waiting for bartender connection.')
         self.socket_init()
         print('Socket interface ready.')
 
@@ -389,12 +392,9 @@ class OfflineDebug:
         self.fake_order_proc.daemon = True
         self.fake_order_proc.start()
 
-        self.sock_notif_proc = mp.Process(target=self.sock_notif)
-        self.sock_notif_proc.daemon = True
-        self.sock_notif_proc.start()
-
-        while True:
-            time.sleep(60)
+        self.sock_notif()
+        print('Closing connection.')
+        self.cleanup()
 
     def sock_notif(self):
         """
@@ -403,10 +403,6 @@ class OfflineDebug:
         while True:
             notif = self.bar_conn.recv(self.buffer_size)
             if not len(notif): # Bartender closed.
-                self.bar_conn.close()
-                self.bar_sock.close()
-                print('Error connecting to the bartender.')
-                print('Please Ctrl-C this program and restart it.')
                 return
             notif = self.gpg.decrypt(notif, passphrase=self.gpg_passwd)
             notif = pkl.loads(zlib.decompress(notif.data))
