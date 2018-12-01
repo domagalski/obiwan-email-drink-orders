@@ -57,8 +57,10 @@ class BarInterface(OrderReceiver):
         Display an order on the window.
         """
         self.update_drink_wait_count()
+        play_sound = False
 
         if order is not None:
+            play_sound = not len(self.drinks_waiting)
             self.drinks_waiting.append(order)
             if len(self.drinks_waiting) > 1:
                 self.update_drink_wait_count()
@@ -68,6 +70,9 @@ class BarInterface(OrderReceiver):
             if order is None:
                 order = self.drinks_waiting[0]
                 self.update_drink_wait_count()
+
+        if play_sound:
+            os.system('espeak "Attention! Somebody has ordered a drink." &> /dev/null &')
 
         self.order_win.erase()
         if self.win_selected == 'order':

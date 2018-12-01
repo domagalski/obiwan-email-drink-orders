@@ -106,7 +106,7 @@ class PickupWindow:
         self.pickup_win.border(0)
 
         # Add a string
-        #self.pickup_win.addstr(2, 4, 'Ready for pickup:', self.col_white_bold)
+        self.pickup_win.addstr(2, 4, 'Ready for pickup:', self.col_white_bold)
 
         # Append a new order to the drink list.
         if order is not None:
@@ -126,7 +126,6 @@ class PickupWindow:
 
         # Run the display
         idx = self.win_idx
-        self.pickup_win.addstr(2, 4, 'Ready for pickup: %d' % idx, self.col_white_bold)
         for i in range(idx*max_drinks, min((idx+1)*max_drinks, self.curr_len)):
             row_idx = i % max_drinks
             name = self.drinks_pickup[i]['name']
