@@ -6,7 +6,8 @@ import sys
 import time
 import zlib
 import curses
-import threading as th
+import random
+import pickle as pkl
 import multiprocessing as mp
 from OrderReceiver import OrderReceiver
 
@@ -23,6 +24,7 @@ class BarInterface(OrderReceiver):
         self.order_accepted = False
         self.drinks_waiting = []
         self.drinks_pickup = []
+        self.pickup_sock = None
         self.col_white = None
         self.col_selected = None
         self._ev_recv = None
@@ -34,13 +36,13 @@ class BarInterface(OrderReceiver):
         """
         Shut everything down.
         """
-        self.ui_close()
         if self._ev_recv is not None:
             self._ev_recv.terminate()
         if self._ev_getch is not None:
             self._ev_getch.terminate()
         for proc in self.node_procs:
             proc.terminate()
+        self.ui_close()
 
     def bartender_init(self):
         """
@@ -252,7 +254,14 @@ class BarInterface(OrderReceiver):
 
         if not_added:
             drink = {'name':order['from'], 'orders':[new_drink]}
+            pickup_id = str(int(time.time())) + '.'
+            pickup_id += str(random.randint(1 << 10, 1 << 20))
+            drink['id'] = pickup_id
             self.drinks_pickup.append(drink)
+
+            screen_drink = {'id': pickup_id, 'name': drink['name']}
+            screen_drink['action'] = 'add'
+            self.pickup_sock.send(pkl.dumps(screen_drink))
 
         self.display_pickup()
 
@@ -284,6 +293,10 @@ class BarInterface(OrderReceiver):
         for order in pickup_order['orders']:
             notif = {'id': order['id'], 'status': 'pickup'}
             self.send_notif(order['node'], notif)
+
+        # Notify the pickup screen
+        screen_drink = {'id': pickup_order['id'], 'action': 'remove'}
+        self.pickup_sock.send(pkl.dumps(screen_drink))
 
     def process_keypress(self, key):
         """
