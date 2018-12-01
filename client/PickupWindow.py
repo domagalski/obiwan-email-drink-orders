@@ -229,6 +229,7 @@ class PickupWindow:
             while idx < len(self.drinks_pickup):
                 if self.drinks_pickup[idx]['id'] == order['id']:
                     break
+                idx += 1
             self.drinks_pickup.pop(idx)
 
     def process_timer(self):
