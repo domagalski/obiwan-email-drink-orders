@@ -46,7 +46,7 @@ class PickupWindow:
             self.bar_sock.close()
         self.ui_close()
 
-    def display_info(self, rand_color=False):
+    def display_info(self, timer=False):
         """
         Display some information about the bar system.
         """
@@ -65,14 +65,12 @@ class PickupWindow:
             'screen. Have fun!'
             ]).split()
 
-        if rand_color:
+        if timer:
             n_colour = len(self.colour_list)
             col_idx = int(random.random()*n_colour)
-            color = self.colour_list[col_idx]
-        else:
-            color = self.col_white
+            self.info_border = self.colour_list[col_idx]
         self.info_win.erase()
-        self.info_win.bkgdset(' ', color)
+        self.info_win.bkgdset(' ', self.info_border)
         self.info_win.border(0)
 
         self.info_win.addstr(2,4, 'Information:', self.col_white_bold)
@@ -99,10 +97,12 @@ class PickupWindow:
         Display the pickup window.
         """
         # Set up the window
-        n_colour = len(self.colour_list)
-        col_idx = int(random.random()*n_colour)
+        if timer:
+            n_colour = len(self.colour_list)
+            col_idx = int(random.random()*n_colour)
+            self.pu_border = self.colour_list[col_idx]
         self.pickup_win.erase()
-        self.pickup_win.bkgdset(' ', self.colour_list[col_idx])
+        self.pickup_win.bkgdset(' ', self.pu_border)
         self.pickup_win.border(0)
 
         # Add a string
@@ -236,7 +236,7 @@ class PickupWindow:
         """
         Handle timing switches.
         """
-        self.display_info(True)
+        self.display_info(timer=True)
         self.display_pickup(timer=True)
 
     def socket_init(self):
@@ -258,8 +258,8 @@ class PickupWindow:
             msg = self.bar_conn.recv(self.buffer_size)
         self.bar_conn.send(self.bar_acknowledge)
 
-        self.display_info(True)
-        self.display_pickup()
+        self.display_info(timer=True)
+        self.display_pickup(timer=True)
 
     def ui_close(self):
         """
@@ -315,9 +315,11 @@ class PickupWindow:
         self.size = (nrows, ncols)
 
         self.info_win = curses.newwin(nrows-4, 2*ncols/5-6, 2, 4)
+        self.info_border = self.col_white
         self.display_info()
 
         self.pickup_win = curses.newwin(nrows-4, 3*ncols/5-6, 2, 2*ncols/5+2)
+        self.pu_border=self.col_white
         self.pickup_win.bkgdset(' ', self.col_white)
         self.pickup_win.border(0)
         waiting = 'Waiting for connection...'
