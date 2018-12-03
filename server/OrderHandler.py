@@ -33,6 +33,7 @@ class OrderHandler(gw.GmailClient):
         self.port = config['port']
         self.buffer_size = config['buffer_size']
         self.gpg_passwd = config['gpg_passwd']
+        self.menu_file = config['menu_file']
 
         # Set up the subjects for automated emails.
         self.drink_subj = {}
@@ -177,7 +178,10 @@ class OrderHandler(gw.GmailClient):
         reply_msg = {}
         reply_msg['to'] = sender
         reply_msg['subject'] = self.drink_subj['menu']
-        reply_msg['body'] = 'Menu: TBD' # TODO drink menu
+        with open(self.menu_file) as f:
+            reply_msg['body'] = f.read()
+        if len(reply_msg['body'].split('\r\n')) == 1:
+            reply_msg['body'] = reply_msg['body'].replace('\n', '\r\n')
         self.send_message(reply_msg, threadId)
 
     def reply_nopasswd(self, sender, subject, threadId=None):
